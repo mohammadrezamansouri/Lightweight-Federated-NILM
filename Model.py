@@ -190,13 +190,15 @@ class Proposed_Trainer:
                  proxy_model: nn.Module,
                  final_optimizer: torch.optim.Optimizer,
                  proxy_optimizer: torch.optim.Optimizer,
-                 train_loss_fn) -> None:
+                 train_loss_fn,
+                 distillation_weight: float = 0.5) -> None:
 
         self.final_model = final_model
         self.proxy_model = proxy_model
         self.final_optimizer = final_optimizer
         self.proxy_optimizer = proxy_optimizer
         self.train_loss_fn = train_loss_fn
+        self.distillation_weight = distillation_weight
     
     def trainer(
             self,
@@ -205,31 +207,25 @@ class Proposed_Trainer:
         self.final_model.train()
         self.proxy_model.train()
         for X, Y in train_dataloader:
-            
+            X = X.unsqueeze(1)
+
+            # Update final model with a fixed teacher signal from the proxy
             self.final_optimizer.zero_grad()
-            self.proxy_optimizer.zero_grad()
-            
-            # Forward pass
-            pred_final = self.final_model(X)
-            pred_proxy = self.proxy_model(X)
-            
-            # Label loss
-            loss_final = self.train_loss_fn(Y, pred_final)
-            loss_proxy = self.train_loss_fn(Y, pred_proxy)
-            sum_loss = loss_final + loss_proxy
-                  
-            # Knowledge distillation loss
-            distillation_loss = self.train_loss_fn(pred_final, pred_proxy)
-            
-            # Combine losses
-            loss_final_combined = loss_final.clone() + distillation_loss
-            loss_proxy_combined = loss_proxy.clone() + distillation_loss
-            
-            # Backward pass
-            loss_final_combined.backward(retain_graph=True)
-            loss_proxy_combined.backward()
-            
+            with torch.no_grad():
+                proxy_logits = self.proxy_model(X)
+
+            final_logits = self.final_model(X)
+            loss_final = self.train_loss_fn(Y, final_logits)
+            distillation_loss = self.train_loss_fn(proxy_logits, final_logits)
+            loss_final_combined = loss_final + self.distillation_weight * distillation_loss
+            loss_final_combined.backward()
             self.final_optimizer.step()
+
+            # Update proxy model only with label supervision
+            self.proxy_optimizer.zero_grad()
+            pred_proxy = self.proxy_model(X)
+            loss_proxy = self.train_loss_fn(Y, pred_proxy)
+            loss_proxy.backward()
             self.proxy_optimizer.step()
         
         
@@ -239,7 +235,8 @@ class Proposed_Trainer:
         
         self.final_model.train()
         for X, Y in train_dataloader:
-            
+            X = X.unsqueeze(1)
+
             # Forward pass
             pred = self.final_model(X)
             loss = self.train_loss_fn(Y, pred)
