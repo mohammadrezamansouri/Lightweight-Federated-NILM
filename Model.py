@@ -16,7 +16,12 @@ class Proxy_Model(nn.Module):
         self.fc2 = nn.Linear(1024, input_size)
 
     def forward(self, x):
-        x = x.unsqueeze(1)
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+        elif x.dim() == 4 and x.size(2) == 1:
+            x = x.squeeze(2)
+        if x.dim() != 3:
+            raise ValueError(f"Proxy_Model expected 2D or 3D input, but received tensor with shape {tuple(x.shape)}")
         x = self.conv1(x)
         x = self.relu(x)
         x = self.conv2(x)
